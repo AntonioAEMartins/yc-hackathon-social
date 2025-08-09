@@ -18,5 +18,3 @@ model Friend {
   xUsername          String?
   instagramUsername  String?
 }
-
-
