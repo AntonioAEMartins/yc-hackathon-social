@@ -18,12 +18,17 @@ function extractSourceFromStack(
     // Matches both "at func (path:line:col)" and "at path:line:col"
     const match = line.match(/\(?([^()\s]+?):(\d+):(\d+)\)?/);
     if (match) {
-      const absolutePath = match[1];
+      const absolutePathRaw = match[1];
+      const absolutePath = absolutePathRaw.replace(/^file:\/\//, "");
       const lineNum = Number(match[2]);
       const colNum = Number(match[3]);
-      const relativePath = absolutePath.startsWith(cwd)
-        ? absolutePath.slice(cwd.length + 1)
-        : absolutePath;
+      const normalized = absolutePath.replace(/\\/g, "/");
+      const srcIdx = normalized.indexOf("/src/");
+      const relativePath = srcIdx !== -1
+        ? normalized.slice(srcIdx + 1)
+        : absolutePath.startsWith(cwd)
+          ? absolutePath.slice(cwd.length + 1)
+          : normalized;
       return { absolutePath, relativePath, line: lineNum, column: colNum };
     }
   }
