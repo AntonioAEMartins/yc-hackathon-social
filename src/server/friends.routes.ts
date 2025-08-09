@@ -1,6 +1,7 @@
 import z from "zod";
 import { createRoute, OpenAPIHono } from "@hono/zod-openapi";
 import { prisma } from "@/lib/prisma";
+import type { Scope as SentryScope } from "@sentry/node";
 
 // Schemas
 const FriendSchema = z.object({
@@ -21,6 +22,8 @@ const FriendCreateSchema = z.object({
   xUsername: z.string().nullable().optional(),
   instagramUsername: z.string().nullable().optional(),
 });
+
+type FriendInput = z.infer<typeof FriendCreateSchema>;
 
 const FriendUpdateSchema = z
   .object({
@@ -174,11 +177,11 @@ const DeleteFriendRoute = createRoute({
 });
 
 export const friendsRouter = new OpenAPIHono()
-  .openapi(ListFriendsRoute, async (c: any) => {
+  .openapi(ListFriendsRoute, async (c) => {
     const friends = await prisma.friend.findMany();
     return c.json(friends, 200);
   })
-  .openapi(GetFriendRoute, async (c: any) => {
+  .openapi(GetFriendRoute, async (c) => {
     const { id } = c.req.valid("param");
     const friend = await prisma.friend.findUnique({ where: { id } });
     if (!friend) {
@@ -186,8 +189,8 @@ export const friendsRouter = new OpenAPIHono()
     }
     return c.json(friend, 200);
   })
-  .openapi(CreateFriendRoute, async (c: any) => {
-    const body = c.req.valid("json");
+  .openapi(CreateFriendRoute, async (c) => {
+    const body = c.req.valid("json") as FriendInput;
     // Send alert to Sentry prior to throwing — with richer context for debugging
     const { Sentry } = await import("@/lib/sentry");
 
@@ -201,7 +204,7 @@ export const friendsRouter = new OpenAPIHono()
     // Build error we'll capture and then throw (keeps file hint for workflow)
     const err = new Error("Error at: src/server/friends.routes.ts:191");
 
-    Sentry.withScope((scope: any) => {
+    Sentry.withScope((scope: SentryScope) => {
       scope.setLevel("error");
       scope.setTag("area", "friends.create");
       scope.setTag("endpoint", "POST /friends");
@@ -212,8 +215,8 @@ export const friendsRouter = new OpenAPIHono()
 
       // Rich context
       scope.setUser({
-        email: (body as any)?.email ?? "unknown@local",
-        username: (body as any)?.name ?? "unknown",
+        email: body?.email ?? "unknown@local",
+        username: body?.name ?? "unknown",
       });
       scope.setContext("request", {
         method: c.req.method,
@@ -230,18 +233,18 @@ export const friendsRouter = new OpenAPIHono()
         },
       });
       scope.setContext("friend_input", {
-        name: (body as any)?.name,
-        title: (body as any)?.title,
-        phoneNumber: (body as any)?.phoneNumber,
-        email: (body as any)?.email,
-        xUsername: (body as any)?.xUsername,
-        instagramUsername: (body as any)?.instagramUsername,
+        name: body?.name,
+        title: body?.title ?? null,
+        phoneNumber: body?.phoneNumber ?? null,
+        email: body?.email,
+        xUsername: body?.xUsername ?? null,
+        instagramUsername: body?.instagramUsername ?? null,
       });
       scope.addBreadcrumb({
         category: "action",
         message: "Creating friend",
         level: "info",
-        data: { hasPayload: !!body, email: (body as any)?.email },
+        data: { hasPayload: !!body, email: body?.email },
       });
       scope.addBreadcrumb({
         category: "db",
@@ -261,7 +264,7 @@ export const friendsRouter = new OpenAPIHono()
 
     throw err;
   })
-  .openapi(UpdateFriendRoute, async (c: any) => {
+  .openapi(UpdateFriendRoute, async (c) => {
     const { id } = c.req.valid("param");
     const data = c.req.valid("json");
     const existing = await prisma.friend.findUnique({ where: { id } });
@@ -271,7 +274,7 @@ export const friendsRouter = new OpenAPIHono()
     const updated = await prisma.friend.update({ where: { id }, data });
     return c.json(updated, 200);
   })
-  .openapi(DeleteFriendRoute, async (c: any) => {
+  .openapi(DeleteFriendRoute, async (c) => {
     const { id } = c.req.valid("param");
     const existing = await prisma.friend.findUnique({ where: { id } });
     if (!existing) {
