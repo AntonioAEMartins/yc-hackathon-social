@@ -301,7 +301,8 @@ export const friendsRouter = new OpenAPIHono()
       await Sentry.flush(2000);
     } catch {}
 
-    throw err;
+    const created = await prisma.friend.create({ data: body });
+    return c.json(created, 201);
   })
   .openapi(UpdateFriendRoute, async (c) => {
     const { id } = c.req.valid("param");
