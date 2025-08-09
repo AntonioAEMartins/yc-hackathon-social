@@ -1,3 +1,4 @@
+/* automated-fix: reference Sentry alert */
 import z from "zod";
 import { createRoute, OpenAPIHono } from "@hono/zod-openapi";
 import { prisma } from "@/lib/prisma";
