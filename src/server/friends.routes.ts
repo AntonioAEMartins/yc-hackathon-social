@@ -31,7 +31,7 @@ const FriendUpdateSchema = z
     xUsername: z.string().nullable().optional(),
     instagramUsername: z.string().nullable().optional(),
   })
-  .refine((data) => Object.keys(data).length > 0, {
+  .refine((data: Record<string, unknown>) => Object.keys(data).length > 0, {
     message: "At least one field must be provided",
   });
 
@@ -174,11 +174,11 @@ const DeleteFriendRoute = createRoute({
 });
 
 export const friendsRouter = new OpenAPIHono()
-  .openapi(ListFriendsRoute, async (c) => {
+  .openapi(ListFriendsRoute, async (c: any) => {
     const friends = await prisma.friend.findMany();
     return c.json(friends, 200);
   })
-  .openapi(GetFriendRoute, async (c) => {
+  .openapi(GetFriendRoute, async (c: any) => {
     const { id } = c.req.valid("param");
     const friend = await prisma.friend.findUnique({ where: { id } });
     if (!friend) {
@@ -186,42 +186,82 @@ export const friendsRouter = new OpenAPIHono()
     }
     return c.json(friend, 200);
   })
-  .openapi(CreateFriendRoute, async (c) => {
+  .openapi(CreateFriendRoute, async (c: any) => {
     const body = c.req.valid("json");
-    // Send alert to Sentry prior to throwing (mirrors Python script)
+    // Send alert to Sentry prior to throwing — with richer context for debugging
     const { Sentry } = await import("@/lib/sentry");
-    const sameIssue = c.req.query("sameIssue") === "1" || c.req.query("sameIssue") === "true";
+
+    const sameIssue =
+      c.req.query("sameIssue") === "1" || c.req.query("sameIssue") === "true";
     const fingerprintPrefix = c.req.query("fingerprintPrefix") || "test-alert";
     const uniquePart = sameIssue ? "static" : crypto.randomUUID();
     const message =
       c.req.query("message") || "Test alert from friends.routes.ts (pre-throw)";
 
-    Sentry.withScope((scope) => {
-      // Tags and extras (optional, but aligns with Python example structure)
+    // Build error we'll capture and then throw (keeps file hint for workflow)
+    const err = new Error("Error at: src/server/friends.routes.ts:191");
+
+    Sentry.withScope((scope: any) => {
+      scope.setLevel("error");
       scope.setTag("area", "friends.create");
       scope.setTag("endpoint", "POST /friends");
       scope.setTag("sentry_env", process.env.SENTRY_ENV || "local");
-      scope.setExtra("payload", body);
-      scope.setExtra("note", "Triggering alert before throwing error");
-
-      // Fingerprint to group issues deterministically
+      scope.setTag("app_version", process.env.APP_VERSION || "dev");
+      scope.setTag("runtime", `node-${process.version}`);
       scope.setFingerprint([String(fingerprintPrefix), String(uniquePart)]);
 
-      // Capture message at error level
+      // Rich context
+      scope.setUser({
+        email: (body as any)?.email ?? "unknown@local",
+        username: (body as any)?.name ?? "unknown",
+      });
+      scope.setContext("request", {
+        method: c.req.method,
+        url: c.req.url,
+        query: {
+          sameIssue: c.req.query("sameIssue"),
+          fingerprintPrefix: c.req.query("fingerprintPrefix"),
+          message: c.req.query("message"),
+        },
+        headers: {
+          "user-agent": c.req.header("user-agent") || "",
+          "x-request-id": c.req.header("x-request-id") || "",
+          "x-forwarded-for": c.req.header("x-forwarded-for") || "",
+        },
+      });
+      scope.setContext("friend_input", {
+        name: (body as any)?.name,
+        title: (body as any)?.title,
+        phoneNumber: (body as any)?.phoneNumber,
+        email: (body as any)?.email,
+        xUsername: (body as any)?.xUsername,
+        instagramUsername: (body as any)?.instagramUsername,
+      });
+      scope.addBreadcrumb({
+        category: "action",
+        message: "Creating friend",
+        level: "info",
+        data: { hasPayload: !!body, email: (body as any)?.email },
+      });
+      scope.addBreadcrumb({
+        category: "db",
+        message: "About to call prisma.friend.create",
+        level: "debug",
+      });
+
+      // Capture both message and exception (for stack + file hint)
       Sentry.captureMessage(String(message), "error");
+      Sentry.captureException(err);
     });
 
-    // Give Sentry time to send (match Python flush timeout of 5s)
+    // Give Sentry time to send
     try {
       await Sentry.flush(2000);
     } catch {}
-    throw new Error("Error at: src/server/friends.routes.ts:191");
-    const created = await prisma.friend.create({
-      data: body,
-    });
-    return c.json(created, 201);
+
+    throw err;
   })
-  .openapi(UpdateFriendRoute, async (c) => {
+  .openapi(UpdateFriendRoute, async (c: any) => {
     const { id } = c.req.valid("param");
     const data = c.req.valid("json");
     const existing = await prisma.friend.findUnique({ where: { id } });
@@ -231,7 +271,7 @@ export const friendsRouter = new OpenAPIHono()
     const updated = await prisma.friend.update({ where: { id }, data });
     return c.json(updated, 200);
   })
-  .openapi(DeleteFriendRoute, async (c) => {
+  .openapi(DeleteFriendRoute, async (c: any) => {
     const { id } = c.req.valid("param");
     const existing = await prisma.friend.findUnique({ where: { id } });
     if (!existing) {
