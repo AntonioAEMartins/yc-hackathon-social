@@ -223,13 +223,22 @@ export const friendsRouter = new OpenAPIHono()
   })
   .openapi(CreateFriendRoute, async (c) => {
     const body = c.req.valid("json") as FriendInput;
+
+    // Only trigger the intentional error when explicitly requested
+    const shouldTestError =
+      c.req.query("testError") === "1" || c.req.query("testError") === "true";
+    if (!shouldTestError) {
+      const created = await prisma.friend.create({ data: body });
+      return c.json(created, 201);
+    }
+
     // Send alert to Sentry prior to throwing — with richer context for debugging
     const { Sentry } = await import("@/lib/sentry");
 
     const sameIssue =
       c.req.query("sameIssue") === "1" || c.req.query("sameIssue") === "true";
     const fingerprintPrefix = c.req.query("fingerprintPrefix") || "test-alert";
-    const uniquePart = sameIssue ? "static" : crypto.randomUUID();
+    const uniquePart = sameIssue ? "static" : (globalThis.crypto?.randomUUID?.() ?? "random");
     const message =
       c.req.query("message") || "Test alert from friends.routes.ts (pre-throw)";
 
