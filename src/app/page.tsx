@@ -32,6 +32,7 @@ import {
 import { z } from "zod";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
+import { toast } from "sonner";
 
 type Friend = {
   id: number;
@@ -176,15 +177,20 @@ function AddFriendDialog({
       instagramUsername: toNull(values.instagramUsername),
     };
 
-    const res = await client.api.friends.$post({ json: payload });
-    if (!res.ok) {
-      const text = await res.text();
-      throw new Error(text || `Failed with status ${res.status}`);
+    try {
+      const res = await client.api.friends.$post({ json: payload });
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || `Failed with status ${res.status}`);
+      }
+      const created = (await res.json()) as Friend;
+      onCreated(created);
+      setOpen(false);
+      form.reset();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to add friend";
+      toast.error(message);
     }
-    const created = (await res.json()) as Friend;
-    onCreated(created);
-    setOpen(false);
-    form.reset();
   };
 
   return (
