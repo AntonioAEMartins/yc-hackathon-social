@@ -188,6 +188,34 @@ export const friendsRouter = new OpenAPIHono()
   })
   .openapi(CreateFriendRoute, async (c) => {
     const body = c.req.valid("json");
+    // Send alert to Sentry prior to throwing (mirrors Python script)
+    const { Sentry } = await import("@/lib/sentry");
+    const sameIssue = c.req.query("sameIssue") === "1" || c.req.query("sameIssue") === "true";
+    const fingerprintPrefix = c.req.query("fingerprintPrefix") || "test-alert";
+    const uniquePart = sameIssue ? "static" : crypto.randomUUID();
+    const message =
+      c.req.query("message") || "Test alert from friends.routes.ts (pre-throw)";
+
+    Sentry.withScope((scope) => {
+      // Tags and extras (optional, but aligns with Python example structure)
+      scope.setTag("area", "friends.create");
+      scope.setTag("endpoint", "POST /friends");
+      scope.setTag("sentry_env", process.env.SENTRY_ENV || "local");
+      scope.setExtra("payload", body);
+      scope.setExtra("note", "Triggering alert before throwing error");
+
+      // Fingerprint to group issues deterministically
+      scope.setFingerprint([String(fingerprintPrefix), String(uniquePart)]);
+
+      // Capture message at error level
+      Sentry.captureMessage(String(message), "error");
+    });
+
+    // Give Sentry time to send (match Python flush timeout of 5s)
+    try {
+      await Sentry.flush(2000);
+    } catch {}
+    throw new Error("Error at: src/server/friends.routes.ts:191");
     const created = await prisma.friend.create({
       data: body,
     });
@@ -214,5 +242,3 @@ export const friendsRouter = new OpenAPIHono()
   });
 
 export type FriendsRouterType = typeof friendsRouter;
-
-

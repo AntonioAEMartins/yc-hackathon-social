@@ -2,6 +2,7 @@ import { ZodError } from "zod";
 import { OpenAPIHono } from "@hono/zod-openapi";
 import { Scalar } from "@scalar/hono-api-reference";
 import { friendsRouter } from "./friends.routes";
+import "@/lib/sentry";
 
 
 const app = new OpenAPIHono()
