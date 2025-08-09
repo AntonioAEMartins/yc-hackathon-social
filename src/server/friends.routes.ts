@@ -3,6 +3,33 @@ import { createRoute, OpenAPIHono } from "@hono/zod-openapi";
 import { prisma } from "@/lib/prisma";
 import type { Scope as SentryScope } from "@sentry/node";
 
+// Helper to extract relative file path and line/column from an Error stack
+function extractSourceFromStack(
+  stack: string | undefined,
+  preferPattern?: RegExp
+): { absolutePath: string; relativePath: string; line: number; column: number } | null {
+  if (!stack) return null;
+  const stackLines = stack.split("\n").slice(1);
+  const cwd = process.cwd();
+  const candidateLines = preferPattern
+    ? stackLines.filter((l) => preferPattern.test(l))
+    : stackLines;
+  for (const line of candidateLines) {
+    // Matches both "at func (path:line:col)" and "at path:line:col"
+    const match = line.match(/\(?([^()\s]+?):(\d+):(\d+)\)?/);
+    if (match) {
+      const absolutePath = match[1];
+      const lineNum = Number(match[2]);
+      const colNum = Number(match[3]);
+      const relativePath = absolutePath.startsWith(cwd)
+        ? absolutePath.slice(cwd.length + 1)
+        : absolutePath;
+      return { absolutePath, relativePath, line: lineNum, column: colNum };
+    }
+  }
+  return null;
+}
+
 // Schemas
 const FriendSchema = z.object({
   id: z.number().int().openapi({ example: 1 }),
@@ -202,7 +229,8 @@ export const friendsRouter = new OpenAPIHono()
       c.req.query("message") || "Test alert from friends.routes.ts (pre-throw)";
 
     // Build error we'll capture and then throw (keeps file hint for workflow)
-    const err = new Error("Error at: src/server/friends.routes.ts:191");
+    const err = new Error("Intentional test error in src/server/friends.routes.ts");
+    const source = extractSourceFromStack(err.stack, /friends\.routes\.(t|j)s/);
 
     Sentry.withScope((scope: SentryScope) => {
       scope.setLevel("error");
@@ -212,6 +240,12 @@ export const friendsRouter = new OpenAPIHono()
       scope.setTag("app_version", process.env.APP_VERSION || "dev");
       scope.setTag("runtime", `node-${process.version}`);
       scope.setFingerprint([String(fingerprintPrefix), String(uniquePart)]);
+      if (source) {
+        scope.setTag("source_file", source.relativePath);
+        scope.setTag("source_line", String(source.line));
+        scope.setTag("source_column", String(source.column));
+        scope.setContext("source_frame", source);
+      }
 
       // Rich context
       scope.setUser({
