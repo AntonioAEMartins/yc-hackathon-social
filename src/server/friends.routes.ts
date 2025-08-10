@@ -223,94 +223,85 @@ export const friendsRouter = new OpenAPIHono()
   })
   .openapi(CreateFriendRoute, async (c) => {
     const body = c.req.valid("json") as FriendInput;
+    // Send alert to Sentry prior to throwing — with richer context for debugging
+    const { Sentry } = await import("@/lib/sentry");
 
-    const shouldSimulateError =
-      c.req.query("sentryTest") === "1" || c.req.query("sentryTest") === "true";
+    const sameIssue =
+      c.req.query("sameIssue") === "1" || c.req.query("sameIssue") === "true";
+    const fingerprintPrefix = c.req.query("fingerprintPrefix") || "test-alert";
+    const uniquePart = sameIssue ? "static" : crypto.randomUUID();
+    const message =
+      c.req.query("message") || "Test alert from friends.routes.ts (pre-throw)";
 
-    if (shouldSimulateError) {
-      // Send alert to Sentry prior to throwing — with richer context for debugging
-      const { Sentry } = await import("@/lib/sentry");
+    // Build error we'll capture and then throw (keeps file hint for workflow)
+    const err = new Error("Intentional test error in src/server/friends.routes.ts");
+    const source = extractSourceFromStack(err.stack, /friends\.routes\.(t|j)s/);
 
-      const sameIssue =
-        c.req.query("sameIssue") === "1" || c.req.query("sameIssue") === "true";
-      const fingerprintPrefix = c.req.query("fingerprintPrefix") || "test-alert";
-      const uniquePart = sameIssue ? "static" : crypto.randomUUID();
-      const message =
-        c.req.query("message") || "Test alert from friends.routes.ts (pre-throw)";
+    Sentry.withScope((scope: SentryScope) => {
+      scope.setLevel("error");
+      scope.setTag("area", "friends.create");
+      scope.setTag("endpoint", "POST /friends");
+      scope.setTag("sentry_env", process.env.SENTRY_ENV || "local");
+      scope.setTag("app_version", process.env.APP_VERSION || "dev");
+      scope.setTag("runtime", `node-${process.version}`);
+      scope.setFingerprint([String(fingerprintPrefix), String(uniquePart)]);
+      if (source) {
+        scope.setTag("source_file", source.relativePath);
+        scope.setTag("source_line", String(source.line));
+        scope.setTag("source_column", String(source.column));
+        scope.setContext("source_frame", source);
+      }
 
-      // Build error we'll capture and then throw (keeps file hint for workflow)
-      const err = new Error("Intentional test error in src/server/friends.routes.ts");
-      const source = extractSourceFromStack(err.stack, /friends\.routes\.(t|j)s/);
-
-      Sentry.withScope((scope: SentryScope) => {
-        scope.setLevel("error");
-        scope.setTag("area", "friends.create");
-        scope.setTag("endpoint", "POST /friends");
-        scope.setTag("sentry_env", process.env.SENTRY_ENV || "local");
-        scope.setTag("app_version", process.env.APP_VERSION || "dev");
-        scope.setTag("runtime", `node-${process.version}`);
-        scope.setFingerprint([String(fingerprintPrefix), String(uniquePart)]);
-        if (source) {
-          scope.setTag("source_file", source.relativePath);
-          scope.setTag("source_line", String(source.line));
-          scope.setTag("source_column", String(source.column));
-          scope.setContext("source_frame", source);
-        }
-
-        // Rich context
-        scope.setUser({
-          email: body?.email ?? "unknown@local",
-          username: body?.name ?? "unknown",
-        });
-        scope.setContext("request", {
-          method: c.req.method,
-          url: c.req.url,
-          query: {
-            sameIssue: c.req.query("sameIssue"),
-            fingerprintPrefix: c.req.query("fingerprintPrefix"),
-            message: c.req.query("message"),
-          },
-          headers: {
-            "user-agent": c.req.header("user-agent") || "",
-            "x-request-id": c.req.header("x-request-id") || "",
-            "x-forwarded-for": c.req.header("x-forwarded-for") || "",
-          },
-        });
-        scope.setContext("friend_input", {
-          name: body?.name,
-          title: body?.title ?? null,
-          phoneNumber: body?.phoneNumber ?? null,
-          email: body?.email,
-          xUsername: body?.xUsername ?? null,
-          instagramUsername: body?.instagramUsername ?? null,
-        });
-        scope.addBreadcrumb({
-          category: "action",
-          message: "Creating friend",
-          level: "info",
-          data: { hasPayload: !!body, email: body?.email },
-        });
-        scope.addBreadcrumb({
-          category: "db",
-          message: "About to call prisma.friend.create",
-          level: "debug",
-        });
-
-        // Capture both message and exception (for stack + file hint)
-        Sentry.captureMessage(String(message), "error");
-        Sentry.captureException(err);
+      // Rich context
+      scope.setUser({
+        email: body?.email ?? "unknown@local",
+        username: body?.name ?? "unknown",
+      });
+      scope.setContext("request", {
+        method: c.req.method,
+        url: c.req.url,
+        query: {
+          sameIssue: c.req.query("sameIssue"),
+          fingerprintPrefix: c.req.query("fingerprintPrefix"),
+          message: c.req.query("message"),
+        },
+        headers: {
+          "user-agent": c.req.header("user-agent") || "",
+          "x-request-id": c.req.header("x-request-id") || "",
+          "x-forwarded-for": c.req.header("x-forwarded-for") || "",
+        },
+      });
+      scope.setContext("friend_input", {
+        name: body?.name,
+        title: body?.title ?? null,
+        phoneNumber: body?.phoneNumber ?? null,
+        email: body?.email,
+        xUsername: body?.xUsername ?? null,
+        instagramUsername: body?.instagramUsername ?? null,
+      });
+      scope.addBreadcrumb({
+        category: "action",
+        message: "Creating friend",
+        level: "info",
+        data: { hasPayload: !!body, email: body?.email },
+      });
+      scope.addBreadcrumb({
+        category: "db",
+        message: "About to call prisma.friend.create",
+        level: "debug",
       });
 
-      // Give Sentry time to send
-      try {
-        await Sentry.flush(2000);
-      } catch {}
+      // Capture both message and exception (for stack + file hint)
+      Sentry.captureMessage(String(message), "error");
+      Sentry.captureException(err);
+    });
 
-      throw err;
-    }
+    // Give Sentry time to send
+    try {
+      await Sentry.flush(2000);
+    } catch {}
 
-    const created = await prisma.friend.create({ data: body });
-    return c.json(created, 201);
+    throw err;
   })
   .openapi(UpdateFriendRoute, async (c) => {
     const { id } = c.req.valid("param");
